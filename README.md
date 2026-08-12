@@ -66,25 +66,59 @@ OpenRewrite and ast-grep are optional external tools; neither is bundled.
 
 ## Installation
 
-From a clone:
+### Recommended: install as an isolated CLI tool
+
+Install the latest version directly from GitHub with [uv](https://docs.astral.sh/uv/):
+
+```bash
+uv tool install "refactor-forge @ git+https://github.com/namekun/refactor-forge.git"
+```
+
+If this is your first `uv tool` installation, make sure its executable directory is on `PATH`:
+
+```bash
+uv tool update-shell
+```
+
+Upgrade later with:
+
+```bash
+uv tool upgrade refactor-forge
+```
+
+Once releases are published to PyPI, the recommended command will become:
+
+```bash
+uv tool install refactor-forge
+```
+
+### Development installation
+
+Use an editable environment only when contributing to Refactor Forge itself:
 
 ```bash
 git clone https://github.com/namekun/refactor-forge.git
 cd refactor-forge
-python3 -m venv .venv
+uv venv
 . .venv/bin/activate
-python -m ensurepip --upgrade
-python -m pip install --upgrade pip setuptools
-python -m pip install -e .
+uv pip install -e .
 ```
 
+The standard `venv` and `pip` workflow also works, but it is intentionally not the primary end-user installation path.
+
 ## Quick start
+
+Download the example transformation specification if you installed the CLI without cloning the repository:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/namekun/refactor-forge/main/examples/javax-to-jakarta.json
+```
 
 Preview a transformation in an isolated copy:
 
 ```bash
 refactor-forge plan \
-  --spec examples/javax-to-jakarta.json \
+  --spec javax-to-jakarta.json \
   --target /path/to/repository
 ```
 
@@ -92,7 +126,7 @@ Apply it to a clean Git working tree:
 
 ```bash
 refactor-forge apply \
-  --spec examples/javax-to-jakarta.json \
+  --spec javax-to-jakarta.json \
   --target /path/to/repository
 ```
 
