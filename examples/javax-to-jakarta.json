@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "name": "javax-annotation-to-jakarta",
+  "description": "Migrate javax.annotation imports to jakarta.annotation",
+  "steps": [
+    {
+      "type": "regex",
+      "name": "replace-annotation-imports",
+      "includes": ["**/*.java"],
+      "pattern": "\\bjavax\\.annotation\\.",
+      "replacement": "jakarta.annotation."
+    }
+  ],
+  "verify": [["python3", "verify.py"]]
+}

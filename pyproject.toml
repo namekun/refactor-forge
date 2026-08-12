@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "refactor-forge"
+version = "0.1.0"
+description = "Safe, repeatable code transformations for repositories and LLM coding agents"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{name = "Namhyuk Kim"}]
+requires-python = ">=3.9"
+dependencies = []
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Code Generators"
+]
+
+[project.urls]
+Homepage = "https://github.com/namekun/refactor-forge"
+Repository = "https://github.com/namekun/refactor-forge"
+Issues = "https://github.com/namekun/refactor-forge/issues"
+
+[project.scripts]
+refactor-forge = "refactor_forge.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

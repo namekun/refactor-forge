@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "name": "openrewrite-external-recipe",
+  "description": "Example adapter for an OpenRewrite-enabled Maven repository",
+  "steps": [
+    {
+      "type": "command",
+      "name": "run-openrewrite",
+      "command": ["./mvnw", "rewrite:run", "-Drewrite.activeRecipes=com.example.MyRecipe"]
+    }
+  ],
+  "verify": [["./mvnw", "test"]]
+}
