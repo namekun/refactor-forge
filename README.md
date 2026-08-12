@@ -1,5 +1,7 @@
 # Refactor Forge
 
+**English** | [한국어](README.ko.md)
+
 A safe, extensible code-transformation runner for planning, validating, applying, and continuously monitoring repeatable repository migrations.
 
 > **Status:** early MVP. The local CLI, isolated planning, validation, and repository watcher are functional. MCP, agent skills, GitHub pull requests, and dedicated Claude Code/Codex adapters are planned but not implemented yet.
