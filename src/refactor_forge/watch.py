@@ -3,13 +3,14 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
+import sys
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Set
 
-from .engine import RunReport, apply, plan
+from .engine import RunReport, _git_environment, apply, plan
 from .spec import TransformationSpec
 
 
@@ -37,31 +38,65 @@ class WatchEvent:
 
 
 def _git_head(target: Path) -> str:
-    completed = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=target, text=True,
-        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False,
-    )
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=target,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            env=_git_environment(),
+        )
+    except OSError:
+        return "no-git-head"
     return completed.stdout.strip() if completed.returncode == 0 else "no-git-head"
 
 
 def _tracked_tree_is_clean(target: Path) -> bool:
-    unstaged = subprocess.run(["git", "diff", "--quiet"], cwd=target, check=False)
-    staged = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=target, check=False)
+    environment = _git_environment()
+    try:
+        unstaged = subprocess.run(
+            ["git", "diff", "--quiet"], cwd=target, check=False, env=environment
+        )
+        staged = subprocess.run(
+            ["git", "diff", "--cached", "--quiet"], cwd=target, check=False, env=environment
+        )
+    except OSError:
+        return False
     return unstaged.returncode == 0 and staged.returncode == 0
+
+
+def _safe_watch_relative(target: Path, path: Path):
+    try:
+        relative = path.relative_to(target)
+    except ValueError:
+        return None
+    if path.is_symlink():
+        return None
+    try:
+        if not path.resolve().is_relative_to(target.resolve()):
+            return None
+    except (OSError, RuntimeError):
+        return None
+    return relative
 
 
 def repository_fingerprint(target: Path, extra_ignored: Set[Path]) -> str:
     digest = hashlib.sha256()
     digest.update(_git_head(target).encode("utf-8"))
     resolved_ignored = {path.resolve() for path in extra_ignored}
-    for path in sorted(target.rglob("*")):
-        if not path.is_file() or any(part in DEFAULT_IGNORED for part in path.parts):
+    for path in target.rglob("*"):
+        relative_path = _safe_watch_relative(target, path)
+        if relative_path is None or not path.is_file():
+            continue
+        if any(part in DEFAULT_IGNORED for part in relative_path.parts):
             continue
         resolved_path = path.resolve()
         if any(resolved_path == ignored or ignored in resolved_path.parents for ignored in resolved_ignored):
             continue
-        relative = path.relative_to(target).as_posix()
-        digest.update(relative.encode("utf-8"))
+        relative = relative_path.as_posix()
+        digest.update(b"\0" + relative.encode("utf-8") + b"\0")
         try:
             digest.update(path.read_bytes())
         except OSError:
@@ -117,7 +152,15 @@ class WatchService:
         if previous == fingerprint:
             return WatchEvent("unchanged", fingerprint, message="No repository changes")
 
-        planned = plan(self.config.spec, self.config.target, self.config.allow_commands)
+        # Fingerprinting hashes the current working tree, so evaluate that
+        # same snapshot.  This prevents a dirty violation from becoming a
+        # latched false "no_patch" result after a HEAD-only plan.
+        planned = plan(
+            self.config.spec,
+            self.config.target,
+            self.config.allow_commands,
+            snapshot="working-tree",
+        )
         if not planned.changed_files:
             self._save_fingerprint(fingerprint, "no_patch")
             return WatchEvent("no_patch", fingerprint, report=planned, message="Change detected, no patch required")
@@ -145,7 +188,18 @@ class WatchService:
 
     def run_forever(self) -> None:
         while True:
-            event = self.tick()
+            try:
+                event = self.tick()
+            except Exception as exc:
+                # A transient plan/cleanup/IO failure must not terminate a
+                # long-running watcher or latch a failed fingerprint.
+                print(json.dumps({
+                    "status": "error",
+                    "message": str(exc),
+                    "report_path": None,
+                }, ensure_ascii=False), file=sys.stderr)
+                time.sleep(self.config.interval_seconds)
+                continue
             if event.status != "unchanged":
                 print(json.dumps({
                     "status": event.status,
