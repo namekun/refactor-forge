@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 @dataclass(frozen=True)
@@ -12,6 +12,7 @@ class TransformationContext:
     options: Dict[str, Any] = field(default_factory=dict)
     dry_run: bool = True
     allow_commands: bool = False
+    environment: Optional[Dict[str, str]] = None
 
 
 @dataclass
