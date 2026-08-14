@@ -37,7 +37,7 @@ Refactor Forge remains useful without an LLM. The current MVP is model-agnostic 
 - JSON transformation specifications
 - deterministic regular-expression transformations
 - a command adapter for OpenRewrite, ast-grep, codemods, or internal tools
-- isolated `plan` runs in a temporary copy
+- isolated `plan` runs in a throwaway Git clone of committed `HEAD` for Git repositories (with an isolated-copy fallback for non-Git, unborn, or targets whose directory is not yet in `HEAD`)
 - unified diff generation
 - safe `apply` restricted to Git repositories
 - clean-working-tree enforcement by default
@@ -49,19 +49,20 @@ Refactor Forge remains useful without an LLM. The current MVP is model-agnostic 
 
 ## Safety model
 
-- `plan` never modifies the target repository.
-- External command steps require `--allow-command`.
+- `plan` never modifies the target repository. For a Git target with a committed `HEAD`, it creates a throwaway clone with an independent object database, refs, local config, and no remotes. The clone is removed on every exit path; it is not registered as a source worktree.
+- The default Git `plan` evaluates the committed, tracked `HEAD` snapshot. Dirty, staged, untracked, ignored, and submodule contents are excluded and called out in the report. If the target is not present in `HEAD`, `plan` falls back to an isolated copy of the current target and explicitly reports that Git context is unavailable. Non-Git and unborn repositories use the same isolated-copy behavior.
+- Git snapshots are materialized from raw blobs rather than checkout, so repository checkout hooks and smudge filters are not executed. File and directory symlinks are never followed by transformations or snapshots, which prevents writes outside the sandbox.
+- External command steps require `--allow-command`; commands and verification use the disposable clone's Git context and a scrubbed Git environment, so refs, config, and remotes in the target repository cannot be changed by that context.
 - Commands are argument arrays and are never executed through a shell.
-- `apply` requires a Git repository and rejects a dirty working tree by default.
-- Watch mode is report-only unless `--auto-apply` is explicitly supplied.
-- Auto-apply is blocked when tracked working-tree changes exist.
-- Verification failure fails the run.
+- Watch mode fingerprints the current working tree and plans that same working-tree snapshot, including dirty, untracked, ignored, and populated submodule files (subject to normal excluded-directory rules (including watcher reports) and symlink safety rules). It is report-only unless `--auto-apply` is explicitly supplied.
+- `apply` accepts a repository root or nested target, checks the containing repository, and rejects a dirty working tree by default. Auto-apply is blocked when tracked working-tree changes exist.
+- Verification failure fails the run; a cleanup-only warning is attached to a completed report, while a leaked sandbox remains fatal.
 - The current core does not create commits, push branches, or open pull requests.
 
 ## Requirements
 
 - Python 3.9 or newer
-- Git for `apply` and automatic watch application
+- Git for Git-backed `plan`, `apply`, and automatic watch application
 - Any build tools referenced by your transformation specification
 
 OpenRewrite and ast-grep are optional external tools; neither is bundled.
@@ -116,7 +117,7 @@ Download the example transformation specification if you installed the CLI witho
 curl -fsSLO https://raw.githubusercontent.com/namekun/refactor-forge/main/examples/javax-to-jakarta.json
 ```
 
-Preview a transformation in an isolated copy:
+Preview a transformation in an isolated Git clone of committed `HEAD` (or an isolated copy for a non-Git/unborn/target-not-present-in-`HEAD`):
 
 ```bash
 refactor-forge plan \
@@ -193,6 +194,8 @@ refactor-forge plan \
   --allow-command
 ```
 
+For committed Git targets, command steps and verification commands run with a throwaway clone as their current directory, so Git-aware tools see a valid repository whose refs, config, and object database are independent and whose source remote is removed. The default plan uses committed `HEAD`, not current dirty, staged, or untracked files; source state remains unchanged. Watch mode explicitly uses the matching current working-tree snapshot.
+
 ## Continuous monitoring
 
 Start a report-only watcher:
@@ -234,10 +237,10 @@ refactor-forge watch \
 ## Testing
 
 ```bash
-python -m unittest discover -s tests -v
+PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
 
-The test suite covers isolated planning, real Git application, report-only monitoring, dirty-tree blocking, and opt-in automatic application.
+The test suite covers isolated-clone planning and cleanup, symlink containment, source refs/config/remote preservation, raw-snapshot hook/filter safety, nested targets (including excluded-name components), untracked/ignored/submodule handling, Git-context verification, non-Git and unborn fallback planning, nested and dirty-tree application, working-tree drift monitoring, dirty-tree blocking, and opt-in automatic application.
 
 ## Roadmap
 
@@ -245,7 +248,6 @@ The test suite covers isolated planning, real Git application, report-only monit
 - MCP server shared by Claude Code, Codex CLI, and other MCP clients
 - portable Agent Skill describing safe migration workflows
 - dependency and security-advisory monitors
-- isolated Git worktree workers
 - risk-based approval policies
 - branch and pull-request creation
 - bounded LLM-assisted failure analysis

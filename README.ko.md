@@ -37,7 +37,7 @@ Refactor Forge는 LLM 없이도 사용할 수 있습니다. 현재 MVP는 특정
 - JSON 기반 변환 명세
 - 결정론적 정규식 변환
 - OpenRewrite, ast-grep, codemod 또는 사내 도구를 위한 command adapter
-- 임시 복사본에서 실행되는 격리형 `plan`
+- Git 저장소의 커밋된 `HEAD`를 독립적인 임시 Git clone에서 실행하는 격리형 `plan` (비-Git, unborn 또는 디렉터리가 아직 `HEAD`에 없는 대상은 격리 복사본으로 대체)
 - unified diff 생성
 - Git 저장소에서만 동작하는 안전한 `apply`
 - 기본적으로 깨끗한 작업 트리 요구
@@ -49,19 +49,20 @@ Refactor Forge는 LLM 없이도 사용할 수 있습니다. 현재 MVP는 특정
 
 ## 안전 모델
 
-- `plan`은 대상 저장소를 변경하지 않습니다.
-- 외부 command step은 `--allow-command`가 있어야 실행됩니다.
+- `plan`은 대상 저장소를 변경하지 않습니다. 커밋된 `HEAD`가 있는 Git 대상에서는 object database, refs, local config가 독립되고 remote가 제거된 임시 clone을 만들며, 모든 종료 경로에서 clone을 삭제합니다. 원본 worktree 등록을 만들지 않습니다.
+- 기본 Git `plan`은 커밋된 tracked `HEAD` 스냅샷을 평가합니다. dirty, staged, untracked, ignored 및 submodule 내용은 제외되며 리포트에 명시됩니다. 대상이 `HEAD`에 아직 없으면 현재 대상을 격리 복사본으로 처리하고 Git 컨텍스트가 없음을 리포트합니다. 비-Git 및 unborn 저장소도 같은 격리 복사본을 사용합니다.
+- Git 스냅샷은 checkout 대신 raw blob에서 materialize하므로 저장소 checkout hook과 smudge filter를 실행하지 않습니다. 변환과 스냅샷은 파일/디렉터리 symlink를 따라가지 않아 sandbox 밖 쓰기를 차단합니다.
+- 외부 command step은 `--allow-command`가 있어야 실행되며, command와 검증은 임시 clone의 Git 컨텍스트와 정리된 Git 환경에서 실행됩니다. 따라서 그 컨텍스트에서 원본 refs, config, remote를 변경할 수 없습니다.
 - 명령은 인자 배열로 실행되며 셸을 거치지 않습니다.
-- `apply`는 Git 저장소에서만 실행되며, 기본적으로 dirty working tree를 거부합니다.
-- Watch 모드는 `--auto-apply`를 명시하지 않는 한 리포트만 생성합니다.
-- 추적 중인 작업 트리 변경이 있으면 자동 적용을 차단합니다.
-- 검증에 실패하면 실행 전체가 실패합니다.
+- Watch는 현재 working tree를 fingerprint하고 동일한 working-tree 스냅샷을 계획합니다. dirty, untracked, ignored 및 내용이 존재하는 submodule도 (기본 제외 디렉터리 규칙(Watch report 포함)과 symlink 안전 규칙 안에서) 평가합니다. `--auto-apply`를 명시하지 않으면 리포트만 생성합니다.
+- `apply`는 저장소 루트와 nested target 모두 허용하고 포함 저장소를 검사하며, 기본적으로 dirty working tree를 거부합니다. 추적 중인 변경이 있으면 자동 적용을 차단합니다.
+- 검증 실패는 실행 실패로 처리하며, 정리만 실패한 경우 완료된 리포트에 경고를 붙이고 sandbox 누수는 치명적 오류로 처리합니다.
 - 현재 코어는 커밋, 브랜치 push 또는 Pull Request 생성을 수행하지 않습니다.
 
 ## 요구 사항
 
 - Python 3.9 이상
-- `apply` 및 Watch 자동 적용을 위한 Git
+- Git 대상 `plan`, `apply` 및 Watch 자동 적용을 위한 Git
 - 변환 명세에서 사용하는 빌드 도구
 
 OpenRewrite와 ast-grep은 선택적 외부 도구이며 Refactor Forge에 포함되어 있지 않습니다.
@@ -116,7 +117,7 @@ uv pip install -e .
 curl -fsSLO https://raw.githubusercontent.com/namekun/refactor-forge/main/examples/javax-to-jakarta.json
 ```
 
-격리된 복사본에서 변환 결과를 미리 확인합니다.
+커밋된 `HEAD`의 임시 Git clone(비-Git, unborn 및 `HEAD`에 없는 대상은 격리 복사본)에서 변환 결과를 미리 확인합니다.
 
 ```bash
 refactor-forge plan \
@@ -193,6 +194,8 @@ refactor-forge plan \
   --allow-command
 ```
 
+커밋된 Git 대상에서는 command step과 검증 명령이 독립된 임시 clone을 현재 디렉터리로 사용하므로 Git-aware 도구도 원본과 분리된 refs, config, object database 컨텍스트에서 동작하며 source remote는 제거되어 있습니다. 기본 `plan`은 커밋된 `HEAD`만 사용하며 원본 상태를 변경하지 않습니다. Watch는 이에 대응하는 현재 working-tree 스냅샷을 명시적으로 사용합니다.
+
 ## 지속 모니터링
 
 원본을 변경하지 않고 리포트만 생성하는 Watch를 시작합니다.
@@ -234,10 +237,10 @@ refactor-forge watch \
 ## 테스트
 
 ```bash
-python -m unittest discover -s tests -v
+PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
 
-테스트 스위트는 격리형 계획, 실제 Git 적용, 리포트 전용 모니터링, dirty tree 차단 및 명시적 자동 적용을 검증합니다.
+테스트 스위트는 격리 clone 계획과 정리, symlink containment, 원본 refs/config/remote 보존, hook/filter 안전성, excluded 이름을 포함한 nested target, untracked/ignored/submodule 처리, Git 컨텍스트 검증, 비-Git 및 unborn fallback, nested/dirty tree 적용, working-tree drift 감시, dirty tree 차단 및 명시적 자동 적용을 검증합니다.
 
 ## 로드맵
 
@@ -245,7 +248,6 @@ python -m unittest discover -s tests -v
 - Claude Code, Codex CLI 및 기타 MCP 클라이언트가 공유하는 MCP 서버
 - 안전한 마이그레이션 절차를 설명하는 이식 가능한 Agent Skill
 - 의존성 및 보안 advisory 모니터
-- 격리된 Git worktree worker
 - 위험도 기반 승인 정책
 - 브랜치 및 Pull Request 생성
 - 제한된 범위의 LLM 기반 실패 분석
